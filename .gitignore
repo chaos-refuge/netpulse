@@ -1,0 +1,19 @@
+# Binaries
+netpulse
+netpulse-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
