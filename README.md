@@ -134,8 +134,9 @@ POST /api/optimize/proxy  # 代理开关
 
 ## 系统要求
 
-- macOS 10.15+（部分优化功能需要管理员权限）
-- Linux 支持正在开发中
+- **macOS** 10.15+（部分优化功能需要管理员权限）
+- **Windows** 10/11（需管理员权限运行）
+- **Linux**（需 NetworkManager / systemd-resolved / nmcli）
 
 ## 贡献
 
