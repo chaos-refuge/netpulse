@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package detect
 
 import (
 	"context"
@@ -11,15 +11,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vosskstudio/netpulse/internal/model"
 )
 
-// --- Ping (Windows) ---
-
-func quickPing(target string, count int, timeout time.Duration) (avgRTT float64, lossPct float64, err error) {
+func QuickPing(target string, count int, timeout time.Duration) (avgRTT float64, lossPct float64, err error) {
 	if ip := net.ParseIP(target); ip == nil {
 		addrs, e := net.LookupHost(target)
 		if e != nil || len(addrs) == 0 {
-			return 0, 100, fmt.Errorf("cannot resolve %s", target)
+			return 0, 100, fmt.Errorf("cannot resolve %s: %w", target, e)
 		}
 		target = addrs[0]
 	}
@@ -32,13 +32,10 @@ func quickPing(target string, count int, timeout time.Duration) (avgRTT float64,
 	out, runErr := cmd.Output()
 	output := string(out)
 
-	// Windows: "Lost = 0 (0% loss)"
 	lossRe := regexp.MustCompile(`Lost = \d+ \((\d+)%`)
 	if m := lossRe.FindStringSubmatch(output); len(m) >= 2 {
 		lossPct, _ = strconv.ParseFloat(m[1], 64)
 	}
-
-	// Windows: "Average = 3ms" or "Average = 0ms" inside round-trip section
 	rttRe := regexp.MustCompile(`Average = (\d+)ms`)
 	if m := rttRe.FindStringSubmatch(output); len(m) >= 2 {
 		avgRTT, _ = strconv.ParseFloat(m[1], 64)
@@ -48,14 +45,12 @@ func quickPing(target string, count int, timeout time.Duration) (avgRTT float64,
 		return 0, 100, fmt.Errorf("100%% packet loss")
 	}
 	if runErr != nil && avgRTT == 0 {
-		return 0, lossPct, runErr
+		return 0, lossPct, fmt.Errorf("ping %s: %w", target, runErr)
 	}
 	return avgRTT, lossPct, nil
 }
 
-// --- Traceroute (Windows - tracert) ---
-
-func doTrace(target string, maxHops int, timeout time.Duration) ([]traceHop, error) {
+func DoTrace(target string, maxHops int, timeout time.Duration) ([]model.TraceHop, error) {
 	timeoutMs := int(timeout.Milliseconds()) * maxHops * 3
 	if timeoutMs < 30000 {
 		timeoutMs = 30000
@@ -70,8 +65,8 @@ func doTrace(target string, maxHops int, timeout time.Duration) ([]traceHop, err
 	return parseTraceOutputWindows(output, err)
 }
 
-func parseTraceOutputWindows(output string, cmdErr error) ([]traceHop, error) {
-	var hops []traceHop
+func parseTraceOutputWindows(output string, cmdErr error) ([]model.TraceHop, error) {
+	var hops []model.TraceHop
 	lines := strings.Split(output, "\n")
 	re := regexp.MustCompile(`^\s*(\d+)\s+(<?\d+\s*ms|[*])\s+(<?\d+\s*ms|[*])\s+(<?\d+\s*ms|[*])\s+(.+)`)
 
@@ -82,13 +77,11 @@ func parseTraceOutputWindows(output string, cmdErr error) ([]traceHop, error) {
 		}
 		hop, _ := strconv.Atoi(m[1])
 		ip := strings.TrimSpace(m[5])
-		// remove brackets from "[192.168.1.1]"
 		ip = strings.TrimPrefix(ip, "[")
 		ip = strings.TrimSuffix(ip, "]")
 
-		th := traceHop{Hop: hop, IP: ip}
+		th := model.TraceHop{Hop: hop, IP: ip}
 
-		// Try to extract RTT from the first time column
 		rttRe := regexp.MustCompile(`<?(\d+)\s*ms`)
 		if rttM := rttRe.FindStringSubmatch(m[2]); len(rttM) >= 2 {
 			if rtt, err := strconv.ParseFloat(rttM[1], 64); err == nil {
@@ -104,9 +97,7 @@ func parseTraceOutputWindows(output string, cmdErr error) ([]traceHop, error) {
 	return hops, nil
 }
 
-// --- WiFi (Windows - netsh wlan) ---
-
-func getWifiInfo() (*wifiInfo, error) {
+func GetWifiInfo() (*model.WifiInfo, error) {
 	cmd := exec.Command("netsh", "wlan", "show", "interfaces")
 	out, err := cmd.Output()
 	if err != nil {
@@ -114,36 +105,30 @@ func getWifiInfo() (*wifiInfo, error) {
 	}
 	output := string(out)
 
-	info := &wifiInfo{}
+	info := &model.WifiInfo{}
 
-	info.SSID = extractField(output, `\s*SSID\s*:\s*(.+)`)
-	info.BSSID = extractField(output, `\s*BSSID\s*:\s*(.+)`)
+	info.SSID = ExtractField(output, `\s*SSID\s*:\s*(.+)`)
+	info.BSSID = ExtractField(output, `\s*BSSID\s*:\s*(.+)`)
 
-	// Signal: "Signal                 : 85%"
-	if sigStr := extractField(output, `\s*Signal\s*:\s*(\d+)%`); sigStr != "" {
+	if sigStr := ExtractField(output, `\s*Signal\s*:\s*(\d+)%`); sigStr != "" {
 		if pct, err := strconv.Atoi(sigStr); err == nil {
-			// Convert percentage to approximate dBm: dBm ≈ (pct/2) - 100
 			info.RSSI = (pct / 2) - 100
 		}
 	}
 
-	// Channel
-	if chStr := extractField(output, `\s*Channel\s*:\s*(\d+)`); chStr != "" {
+	if chStr := ExtractField(output, `\s*Channel\s*:\s*(\d+)`); chStr != "" {
 		info.Channel, _ = strconv.Atoi(chStr)
 	}
 
-	// Radio type (protocol)
-	info.PhyMode = extractField(output, `\s*Radio type\s*:\s*(.+)`)
+	info.PhyMode = ExtractField(output, `\s*Radio type\s*:\s*(.+)`)
 
-	// Tx rate
-	if rateStr := extractField(output, `\s*Transmit rate \(Mbps\)\s*:\s*(\d+)`); rateStr != "" {
+	if rateStr := ExtractField(output, `\s*Transmit rate \(Mbps\)\s*:\s*(\d+)`); rateStr != "" {
 		info.TxRate, _ = strconv.Atoi(rateStr)
-	} else if rateStr = extractField(output, `\s*Transmit rate\s*:\s*(\d+)`); rateStr != "" {
+	} else if rateStr = ExtractField(output, `\s*Transmit rate\s*:\s*(\d+)`); rateStr != "" {
 		info.TxRate, _ = strconv.Atoi(rateStr)
 	}
 
-	// State check - if not connected, SSID might be empty
-	state := strings.ToLower(extractField(output, `\s*State\s*:\s*(.+)`))
+	state := strings.ToLower(ExtractField(output, `\s*State\s*:\s*(.+)`))
 	if !strings.Contains(state, "connected") {
 		return info, fmt.Errorf("WiFi not connected")
 	}
@@ -151,10 +136,7 @@ func getWifiInfo() (*wifiInfo, error) {
 	return info, nil
 }
 
-// --- DNS config (Windows) ---
-
-func getCurrentDNS() string {
-	// Try ipconfig /all first - parse DNS Servers lines
+func GetCurrentDNS() string {
 	cmd := exec.Command("ipconfig", "/all")
 	out, err := cmd.Output()
 	if err != nil {
@@ -162,7 +144,6 @@ func getCurrentDNS() string {
 	}
 	output := string(out)
 
-	// Find DNS Servers entries
 	re := regexp.MustCompile(`DNS Servers[ .]*: (.+)`)
 	matches := re.FindAllStringSubmatch(output, -1)
 	var servers []string
@@ -182,10 +163,7 @@ func getCurrentDNS() string {
 	return ""
 }
 
-// --- Network service (Windows) ---
-
-func getActiveNetworkService() string {
-	// Find connected interface name via netsh
+func GetActiveNetworkService() string {
 	cmd := exec.Command("netsh", "interface", "show", "interface")
 	out, err := cmd.Output()
 	if err != nil {
@@ -193,23 +171,19 @@ func getActiveNetworkService() string {
 	}
 	output := string(out)
 
-	// Format: "Enabled   Connected   Dedicated   Wi-Fi"
-	// Look for "Connected" status
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "Connected") {
 			fields := strings.Fields(line)
 			if len(fields) >= 4 {
-				return fields[3] // interface name
+				return fields[3]
 			}
 		}
 	}
 	return "Ethernet"
 }
 
-// --- Proxy state (Windows) ---
-
-func getProxyState(proxyType string) string {
+func GetProxyState(proxyType string) string {
 	switch proxyType {
 	case "webproxy":
 		return getWinHTTPProxy()
@@ -240,7 +214,6 @@ func getWinHTTPProxy() string {
 }
 
 func getIEOption(enableKey, serverKey string) string {
-	// Query IE proxy settings from registry
 	cmd := exec.Command("reg", "query",
 		`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
 		"/v", enableKey)
@@ -250,7 +223,6 @@ func getIEOption(enableKey, serverKey string) string {
 	}
 	output := string(out)
 	if strings.Contains(output, "0x1") {
-		// Proxy is enabled, check server
 		cmd2 := exec.Command("reg", "query",
 			`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`,
 			"/v", serverKey)

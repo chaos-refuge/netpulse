@@ -1,0 +1,170 @@
+/* =============================================================
+   NetPulse Global — reset, atmosphere, layout, typography
+   ============================================================= */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ---- Atmospheric background ---- */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    /* subtle top-down gradient */
+    linear-gradient(180deg, rgba(0,180,216,0.03) 0%, transparent 30%),
+    /* corner glow */
+    radial-gradient(ellipse 600px 400px at 85% 0%, rgba(0,180,216,0.04) 0%, transparent 100%),
+    radial-gradient(ellipse 400px 300px at 15% 100%, rgba(139,92,246,0.02) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---- Scan-line texture ---- */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.015) 2px,
+    rgba(0,0,0,0.015) 4px
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ---- Container ---- */
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-4);
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- Header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-6);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.logo {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--cyan), #3b82f6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 12px var(--cyan-glow);
+}
+
+.logo svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 2;
+}
+
+.brand { display: flex; flex-direction: column; gap: 1px; }
+
+.title {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text);
+  line-height: var(--lh-tight);
+}
+
+/* ---- Status indicator ---- */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.status-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green-glow);
+  animation: breathe 2.5s ease-in-out infinite;
+}
+
+.status-dot.offline {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red-glow);
+}
+
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 4px var(--green-glow); }
+  50%      { box-shadow: 0 0 12px var(--green-glow), 0 0 24px rgba(34,197,94,0.1); }
+}
+
+.status-text {
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+}
+
+/* ---- Actions ---- */
+.actions { display: flex; gap: var(--s-2); }
+
+/* ---- Keyframes ---- */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scan-in {
+  from { opacity: 0; clip-path: inset(0 0 100% 0); }
+  to   { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+
+/* ---- Reduced motion ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

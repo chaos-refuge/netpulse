@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/json"
@@ -6,41 +6,17 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/vosskstudio/netpulse/internal/detect"
+	"github.com/vosskstudio/netpulse/internal/diagnose"
+	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/vosskstudio/netpulse/internal/optimize"
 )
 
-type apiResponse struct {
-	OK        bool        `json:"ok"`
-	Data      interface{} `json:"data"`
-	Error     string      `json:"error"`
-	ElapsedMs int64       `json:"elapsed_ms"`
-}
-
-func writeJSON(w http.ResponseWriter, data interface{}, err error, elapsed time.Duration) {
-	w.Header().Set("Content-Type", "application/json")
-	resp := apiResponse{OK: err == nil, Data: data, ElapsedMs: elapsed.Milliseconds()}
-	if err != nil {
-		resp.Error = err.Error()
-	}
-	json.NewEncoder(w).Encode(resp)
-}
-
-// --- frontend ---
-
-func serveFrontend(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	data, err := frontend.ReadFile("frontend/index.html")
-	if err != nil {
-		http.Error(w, "frontend not found", 500)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
-}
-
-// --- status snapshot ---
+var (
+	errMethodNotAllowed = errors.New("method not allowed; use POST")
+	errMissingParam     = errors.New("missing required parameter")
+)
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
@@ -57,32 +33,26 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	sd := statusData{}
 
-	// ping
-	if rtt, loss, err := quickPing("www.baidu.com", 3, 2*time.Second); err == nil {
+	if rtt, loss, err := detect.QuickPing("www.baidu.com", 3, 2*time.Second); err == nil {
 		sd.Latency = rtt
 		sd.PacketLoss = loss
 	}
 
-	// dns
-	if dnsSpeed, err := dnsResolveSpeed("www.baidu.com"); err == nil {
+	if dnsSpeed, err := detect.DNSResolveSpeed("www.baidu.com"); err == nil {
 		sd.DnsSpeed = dnsSpeed
 	}
 
-	// wifi
-	if info, err := getWifiInfo(); err == nil {
+	if info, err := detect.GetWifiInfo(); err == nil {
 		sd.WifiSSID = info.SSID
 		sd.WifiRSSI = info.RSSI
 		sd.WifiNoise = info.Noise
 	}
 
-	// network
-	sd.NetworkName = getActiveNetworkService()
-	sd.DNSServers = getCurrentDNS()
+	sd.NetworkName = detect.GetActiveNetworkService()
+	sd.DNSServers = detect.GetCurrentDNS()
 
 	writeJSON(w, sd, nil, time.Since(start))
 }
-
-// --- detect handlers ---
 
 func handlePing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -102,7 +72,7 @@ func handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rtt, loss, err := quickPing(req.Target, req.Count, 3*time.Second)
+	rtt, loss, err := detect.QuickPing(req.Target, req.Count, 3*time.Second)
 	type pingData struct {
 		Target     string  `json:"target"`
 		AvgRTT     float64 `json:"avg_rtt_ms"`
@@ -181,17 +151,17 @@ func handleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	hops, err := doTrace(req.Target, 15, 2*time.Second)
+	hops, err := detect.DoTrace(req.Target, 15, 2*time.Second)
 	type traceData struct {
-		Target string      `json:"target"`
-		Hops   []traceHop  `json:"hops"`
+		Target string            `json:"target"`
+		Hops   []model.TraceHop  `json:"hops"`
 	}
 	writeJSON(w, traceData{Target: req.Target, Hops: hops}, err, time.Since(start))
 }
 
 func handleWifi(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	info, err := getWifiInfo()
+	info, err := detect.GetWifiInfo()
 	if info == nil && err != nil {
 		writeJSON(w, nil, err, time.Since(start))
 		return
@@ -202,23 +172,27 @@ func handleWifi(w http.ResponseWriter, r *http.Request) {
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	type configData struct {
-		DNSServers   string `json:"dns_servers"`
-		HTTPProxy    string `json:"http_proxy"`
-		SOCKSProxy   string `json:"socks_proxy"`
-		HTTPSProxy   string `json:"https_proxy"`
-		NetworkName  string `json:"network_name"`
+		DNSServers  string `json:"dns_servers"`
+		HTTPProxy   string `json:"http_proxy"`
+		SOCKSProxy  string `json:"socks_proxy"`
+		HTTPSProxy  string `json:"https_proxy"`
+		NetworkName string `json:"network_name"`
 	}
 	cd := configData{
-		DNSServers:  getCurrentDNS(),
-		HTTPProxy:   getProxyState("webproxy"),
-		SOCKSProxy:  getProxyState("socksfirewallproxy"),
-		HTTPSProxy:  getProxyState("securewebproxy"),
-		NetworkName: getActiveNetworkService(),
+		DNSServers:  detect.GetCurrentDNS(),
+		HTTPProxy:   detect.GetProxyState("webproxy"),
+		SOCKSProxy:  detect.GetProxyState("socksfirewallproxy"),
+		HTTPSProxy:  detect.GetProxyState("securewebproxy"),
+		NetworkName: detect.GetActiveNetworkService(),
 	}
 	writeJSON(w, cd, nil, time.Since(start))
 }
 
-// --- optimize handlers ---
+func handleDiagnose(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	result := diagnose.Analyze()
+	writeJSON(w, result, nil, time.Since(start))
+}
 
 func handleSetDNS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -235,8 +209,8 @@ func handleSetDNS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	netName := getActiveNetworkService()
-	err := setDNSServers(netName, req.Servers)
+	netName := detect.GetActiveNetworkService()
+	err := optimize.SetDNSServers(netName, req.Servers)
 	type result struct {
 		Network string   `json:"network"`
 		Servers []string `json:"servers"`
@@ -246,7 +220,7 @@ func handleSetDNS(w http.ResponseWriter, r *http.Request) {
 
 func handleFlushDNS(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	err := flushDNSCache()
+	err := optimize.FlushDNSCache()
 	type result struct {
 		Message string `json:"message"`
 	}
@@ -264,7 +238,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Enable bool   `json:"enable"`
-		Type   string `json:"type"` // http, socks
+		Type   string `json:"type"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	if req.Type == "" {
@@ -272,8 +246,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	netName := getActiveNetworkService()
-	err := toggleProxy(netName, req.Type, req.Enable)
+	netName := detect.GetActiveNetworkService()
+	err := optimize.ToggleProxy(netName, req.Type, req.Enable)
 	type result struct {
 		Network string `json:"network"`
 		Type    string `json:"type"`
@@ -282,9 +256,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result{Network: netName, Type: req.Type, Enabled: req.Enable}, err, time.Since(start))
 }
 
-// --- errors ---
-
-var (
-	errMethodNotAllowed = errors.New("method not allowed; use POST")
-	errMissingParam     = errors.New("missing required parameter")
-)
+func handlePresets(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	presets := optimize.Presets()
+	writeJSON(w, presets, nil, time.Since(start))
+}

@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package optimize
 
 import (
 	"fmt"
@@ -8,29 +8,25 @@ import (
 	"strings"
 )
 
-func setDNSServers(networkService string, servers []string) error {
+func SetDNSServers(networkService string, servers []string) error {
 	if len(servers) == 0 {
 		return fmt.Errorf("no DNS servers provided")
 	}
 
-	// Try systemd-resolved first (modern Linux: resolvectl)
 	cmd := exec.Command("resolvectl", "dns", networkService, servers[0])
 	_, err := cmd.CombinedOutput()
 	if err == nil {
-		// Additional servers (resolvectl supports multiple in one call)
 		if len(servers) > 1 {
 			args := []string{"dns", networkService}
 			args = append(args, servers...)
 			cmd2 := exec.Command("resolvectl", args...)
 			if out2, err2 := cmd2.CombinedOutput(); err2 != nil {
-				return fmt.Errorf("resolvectl: %s: %s", err2.Error(), strings.TrimSpace(string(out2)))
+				return fmt.Errorf("resolvectl: %s: %w", strings.TrimSpace(string(out2)), err2)
 			}
 		}
 		return nil
 	}
 
-	// Try nmcli (NetworkManager)
-	// Get connection name from device
 	cmd2 := exec.Command("nmcli", "-t", "-f", "NAME,DEVICE", "connection", "show", "--active")
 	out2, _ := cmd2.Output()
 	var connName string
@@ -42,7 +38,6 @@ func setDNSServers(networkService string, servers []string) error {
 		}
 	}
 	if connName == "" {
-		// Try using device name directly
 		connName = networkService
 	}
 
@@ -50,18 +45,16 @@ func setDNSServers(networkService string, servers []string) error {
 	cmd3 := exec.Command("nmcli", "connection", "modify", connName, "ipv4.dns", dnsStr)
 	out3, err3 := cmd3.CombinedOutput()
 	if err3 != nil {
-		return fmt.Errorf("nmcli: %s: %s", err3.Error(), strings.TrimSpace(string(out3)))
+		return fmt.Errorf("nmcli: %s: %w", strings.TrimSpace(string(out3)), err3)
 	}
 
-	// Apply changes
 	cmd4 := exec.Command("nmcli", "connection", "up", connName)
 	cmd4.CombinedOutput()
 
 	return nil
 }
 
-func flushDNSCache() error {
-	// Try systemd-resolved
+func FlushDNSCache() error {
 	cmds := [][]string{
 		{"sudo", "resolvectl", "flush-caches"},
 		{"sudo", "systemd-resolve", "--flush-caches"},
@@ -73,9 +66,8 @@ func flushDNSCache() error {
 	var lastErr error
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
-		// Ignore errors for optional services
 		if out, err := cmd.CombinedOutput(); err != nil {
-			lastErr = fmt.Errorf("%s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+			lastErr = fmt.Errorf("%s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 		} else {
 			return nil
 		}
@@ -83,9 +75,7 @@ func flushDNSCache() error {
 	return lastErr
 }
 
-func toggleProxy(networkService, proxyType string, enable bool) error {
-	// Linux: Use gsettings (GNOME) or environment variables
-	// GNOME proxy settings
+func ToggleProxy(networkService, proxyType string, enable bool) error {
 	if _, err := exec.LookPath("gsettings"); err == nil {
 		mode := "none"
 		if enable {
@@ -93,12 +83,11 @@ func toggleProxy(networkService, proxyType string, enable bool) error {
 		}
 		cmd := exec.Command("gsettings", "set", "org.gnome.system.proxy", "mode", mode)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("gsettings: %s: %s", err.Error(), strings.TrimSpace(string(out)))
+			return fmt.Errorf("gsettings: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 		return nil
 	}
 
-	// Fallback: print instructions
 	if enable {
 		return fmt.Errorf("please set proxy manually: export http_proxy=http://proxy:port")
 	}

@@ -1,9 +1,10 @@
 //go:build linux
 
-package main
+package detect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os/exec"
@@ -11,15 +12,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vosskstudio/netpulse/internal/model"
 )
 
-// --- Ping (Linux) ---
-
-func quickPing(target string, count int, timeout time.Duration) (avgRTT float64, lossPct float64, err error) {
+func QuickPing(target string, count int, timeout time.Duration) (avgRTT float64, lossPct float64, err error) {
 	if ip := net.ParseIP(target); ip == nil {
 		addrs, e := net.LookupHost(target)
 		if e != nil || len(addrs) == 0 {
-			return 0, 100, fmt.Errorf("cannot resolve %s", target)
+			return 0, 100, fmt.Errorf("cannot resolve %s: %w", target, e)
 		}
 		target = addrs[0]
 	}
@@ -31,12 +32,10 @@ func quickPing(target string, count int, timeout time.Duration) (avgRTT float64,
 	out, runErr := cmd.Output()
 	output := string(out)
 
-	// Same format as macOS: "3 packets transmitted, 3 received, 0% packet loss"
 	lossRe := regexp.MustCompile(`(\d+\.?\d*)% packet loss`)
 	if m := lossRe.FindStringSubmatch(output); len(m) >= 2 {
 		lossPct, _ = strconv.ParseFloat(m[1], 64)
 	}
-	// Linux: "rtt min/avg/max/mdev = 1.234/3.456/7.890/1.234 ms"
 	rttRe := regexp.MustCompile(`(?:rtt |round-trip )?min/avg/max/(?:mdev|stddev) = [\d.]+/([\d.]+)/[\d.]+/[\d.]+`)
 	if m := rttRe.FindStringSubmatch(output); len(m) >= 2 {
 		avgRTT, _ = strconv.ParseFloat(m[1], 64)
@@ -46,41 +45,38 @@ func quickPing(target string, count int, timeout time.Duration) (avgRTT float64,
 		return 0, 100, fmt.Errorf("100%% packet loss")
 	}
 	if runErr != nil && avgRTT == 0 {
-		return 0, lossPct, runErr
+		return 0, lossPct, fmt.Errorf("ping %s: %w", target, runErr)
 	}
 	return avgRTT, lossPct, nil
 }
 
-// --- Traceroute (Linux) ---
-
-func doTrace(target string, maxHops int, timeout time.Duration) ([]traceHop, error) {
+func DoTrace(target string, maxHops int, timeout time.Duration) ([]model.TraceHop, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout*time.Duration(maxHops))
 	defer cancel()
 
-	// Try traceroute first, fallback to tracepath
 	cmd := exec.CommandContext(ctx, "traceroute", "-m", strconv.Itoa(maxHops), "-q", "1", "-w", "1", target)
 	out, err := cmd.Output()
 	if err != nil {
-		// Fallback: try tracepath (no root needed)
 		cmd2 := exec.CommandContext(ctx, "tracepath", "-m", strconv.Itoa(maxHops), target)
 		out2, err2 := cmd2.Output()
 		if err2 != nil {
-			return nil, fmt.Errorf("traceroute and tracepath both failed: %w, %w", err, err2)
+			return nil, fmt.Errorf("traceroute and tracepath both failed: %w", errors.Join(err, err2))
 		}
 		return parseTracePathOutput(string(out2))
 	}
-	return parseTraceOutput(string(out), err)
+	return ParseTraceOutput(string(out), err)
 }
 
-func parseTracePathOutput(output string) ([]traceHop, error) {
-	var hops []traceHop
+func parseTracePathOutput(output string) ([]model.TraceHop, error) {
+	var hops []model.TraceHop
 	lines := strings.Split(output, "\n")
 	re := regexp.MustCompile(`^\s*(\d+):\s+(\S+)\s+([\d.]+)ms`)
 
 	for _, line := range lines {
-		// Skip header lines
-		if strings.HasPrefix(line, "tracepath") || strings.HasPrefix(line, " 1:") == false &&
-			!strings.Contains(line, "ms") {
+		if strings.HasPrefix(line, "tracepath") {
+			continue
+		}
+		if !strings.Contains(line, "ms") {
 			continue
 		}
 		m := re.FindStringSubmatch(line)
@@ -88,33 +84,27 @@ func parseTracePathOutput(output string) ([]traceHop, error) {
 			hop, _ := strconv.Atoi(m[1])
 			ip := m[2]
 			rtt, _ := strconv.ParseFloat(m[3], 64)
-			hops = append(hops, traceHop{Hop: hop, IP: ip, RTT: rtt})
+			hops = append(hops, model.TraceHop{Hop: hop, IP: ip, RTT: rtt})
 		}
 	}
 	return hops, nil
 }
 
-// --- WiFi (Linux - nmcli) ---
-
-func getWifiInfo() (*wifiInfo, error) {
-	// Try nmcli first (NetworkManager, most common on desktop Linux)
+func GetWifiInfo() (*model.WifiInfo, error) {
 	if info, err := getWifiFromNmcli(); err == nil {
 		return info, nil
 	}
-	// Fallback: iwconfig (older systems)
 	return getWifiFromIwconfig()
 }
 
-func getWifiFromNmcli() (*wifiInfo, error) {
-	// Get active WiFi connection
+func getWifiFromNmcli() (*model.WifiInfo, error) {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("nmcli: %w", err)
 	}
 	output := string(out)
 
-	// Find WiFi connection
 	var wifiDev string
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
@@ -128,15 +118,12 @@ func getWifiFromNmcli() (*wifiInfo, error) {
 		return nil, fmt.Errorf("no active WiFi connection")
 	}
 
-	// Get WiFi details
 	cmd2 := exec.Command("nmcli", "-t", "-f", "SSID,BSSID,SIGNAL,FREQ,RATE", "device", "wifi", "list", "--rescan", "no")
 	out2, _ := cmd2.Output()
 	output2 := string(out2)
 
-	info := &wifiInfo{}
+	info := &model.WifiInfo{}
 
-	// nmcli wifi output: lines with "IN-USE:SSID:MODE:CHAN:RATE:SIGNAL:BARS:SECURITY"
-	// or from `device wifi list`: lines start with "*:SSID:..."
 	for _, line := range strings.Split(output2, "\n") {
 		if !strings.HasPrefix(line, "*:") && !strings.Contains(line, ":") {
 			continue
@@ -145,9 +132,8 @@ func getWifiFromNmcli() (*wifiInfo, error) {
 		parts := strings.Split(line, ":")
 		if len(parts) >= 6 {
 			info.SSID = parts[0]
-			// Signal is the 6th field (0-indexed: 5)
 			if sig, err := strconv.Atoi(parts[4]); err == nil {
-				info.RSSI = sig - 100 // nmcli signal is percentage, convert to dBm
+				info.RSSI = sig - 100
 			}
 			if freq, err := strconv.Atoi(parts[2]); err == nil {
 				info.Channel = freqToChannel(freq)
@@ -159,7 +145,6 @@ func getWifiFromNmcli() (*wifiInfo, error) {
 		}
 	}
 
-	// Also try nmcli device wifi for connected network
 	if info.SSID == "" {
 		cmd3 := exec.Command("nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,CHAN,RATE,BSSID", "device", "wifi")
 		out3, _ := cmd3.Output()
@@ -190,35 +175,33 @@ func getWifiFromNmcli() (*wifiInfo, error) {
 	return info, nil
 }
 
-func getWifiFromIwconfig() (*wifiInfo, error) {
-	// Find wireless interface
+func getWifiFromIwconfig() (*model.WifiInfo, error) {
 	cmd := exec.Command("sh", "-c", "iw dev 2>/dev/null | grep Interface | head -1 | awk '{print $2}'")
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
-		return nil, fmt.Errorf("no wireless interface")
+		return nil, fmt.Errorf("no wireless interface: %w", err)
 	}
 	iface := strings.TrimSpace(string(out))
 
-	// Get link info
 	cmd2 := exec.Command("iw", "dev", iface, "link")
 	out2, err2 := cmd2.Output()
 	if err2 != nil {
-		return nil, err2
+		return nil, fmt.Errorf("iw link: %w", err2)
 	}
 	output := string(out2)
 
-	info := &wifiInfo{}
-	info.SSID = extractField(output, `SSID:\s*(.+)`)
-	info.BSSID = extractField(output, `Connected to\s+(.+)`)
-	if sigStr := extractField(output, `signal:\s*(-?\d+)`); sigStr != "" {
+	info := &model.WifiInfo{}
+	info.SSID = ExtractField(output, `SSID:\s*(.+)`)
+	info.BSSID = ExtractField(output, `Connected to\s+(.+)`)
+	if sigStr := ExtractField(output, `signal:\s*(-?\d+)`); sigStr != "" {
 		info.RSSI, _ = strconv.Atoi(sigStr)
 	}
-	if freqStr := extractField(output, `freq:\s*(\d+)`); freqStr != "" {
+	if freqStr := ExtractField(output, `freq:\s*(\d+)`); freqStr != "" {
 		if freq, err := strconv.Atoi(freqStr); err == nil {
 			info.Channel = freqToChannel(freq)
 		}
 	}
-	if txStr := extractField(output, `tx bitrate:\s*([\d.]+)`); txStr != "" {
+	if txStr := ExtractField(output, `tx bitrate:\s*([\d.]+)`); txStr != "" {
 		if rate, err := strconv.ParseFloat(txStr, 64); err == nil {
 			info.TxRate = int(rate)
 		}
@@ -228,8 +211,6 @@ func getWifiFromIwconfig() (*wifiInfo, error) {
 }
 
 func freqToChannel(freq int) int {
-	// 2.4 GHz: channel = (freq - 2412) / 5 + 1
-	// 5 GHz: channel = (freq - 5000) / 5
 	if freq >= 2412 && freq <= 2484 {
 		return (freq-2412)/5 + 1
 	}
@@ -239,17 +220,13 @@ func freqToChannel(freq int) int {
 	return freq
 }
 
-// --- DNS config (Linux) ---
-
-func getCurrentDNS() string {
-	// Try systemd-resolved first (most common on modern Linux)
+func GetCurrentDNS() string {
 	cmd := exec.Command("resolvectl", "dns")
 	out, err := cmd.Output()
 	if err == nil {
 		return parseResolvectlDNS(string(out))
 	}
 
-	// Fallback: nmcli
 	cmd2 := exec.Command("nmcli", "-t", "-f", "IP4.DNS", "device", "show")
 	out2, err2 := cmd2.Output()
 	if err2 == nil {
@@ -259,7 +236,6 @@ func getCurrentDNS() string {
 		}
 	}
 
-	// Fallback: read /etc/resolv.conf
 	cmd3 := exec.Command("cat", "/etc/resolv.conf")
 	out3, err3 := cmd3.Output()
 	if err3 == nil {
@@ -270,10 +246,8 @@ func getCurrentDNS() string {
 }
 
 func parseResolvectlDNS(output string) string {
-	// Find all IP-like entries in the output
 	var servers []string
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if ip := net.ParseIP(line); ip != nil {
 			servers = append(servers, line)
@@ -310,16 +284,12 @@ func parseResolvConf(output string) string {
 	return strings.Join(servers, ", ")
 }
 
-// --- Network service (Linux) ---
-
-func getActiveNetworkService() string {
-	// nmcli
+func GetActiveNetworkService() string {
 	cmd := exec.Command("nmcli", "-t", "-f", "NAME,TYPE,DEVICE", "connection", "show", "--active")
 	out, err := cmd.Output()
 	if err != nil {
 		return "eth0"
 	}
-	// Take the first connected interface name
 	lines := strings.Split(string(out), "\n")
 	for _, line := range lines {
 		if line == "" {
@@ -327,19 +297,16 @@ func getActiveNetworkService() string {
 		}
 		parts := strings.Split(line, ":")
 		if len(parts) >= 3 {
-			return parts[2] // device name
+			return parts[2]
 		}
 	}
 	return "eth0"
 }
 
-// --- Proxy state (Linux) ---
-
-func getProxyState(proxyType string) string {
-	// Check environment variables first
+func GetProxyState(proxyType string) string {
 	envMap := map[string]string{
-		"webproxy":          "http_proxy",
-		"securewebproxy":    "https_proxy",
+		"webproxy":           "http_proxy",
+		"securewebproxy":     "https_proxy",
 		"socksfirewallproxy": "all_proxy",
 	}
 
@@ -348,7 +315,6 @@ func getProxyState(proxyType string) string {
 		envKey = "http_proxy"
 	}
 
-	// Check uppercase and lowercase
 	for _, key := range []string{strings.ToUpper(envKey), strings.ToLower(envKey)} {
 		cmd := exec.Command("sh", "-c", fmt.Sprintf("echo $%s", key))
 		out, err := cmd.Output()
@@ -360,13 +326,11 @@ func getProxyState(proxyType string) string {
 		}
 	}
 
-	// Check gsettings (GNOME)
 	cmd := exec.Command("gsettings", "get", "org.gnome.system.proxy", "mode")
 	out, err := cmd.Output()
 	if err == nil {
 		mode := strings.Trim(string(out), "'\n ")
 		if mode == "manual" {
-			// Get proxy host:port
 			cmd2 := exec.Command("gsettings", "get", "org.gnome.system.proxy.http", "host")
 			cmd3 := exec.Command("gsettings", "get", "org.gnome.system.proxy.http", "port")
 			if host, err2 := cmd2.Output(); err2 == nil {

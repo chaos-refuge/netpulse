@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package optimize
 
 import (
 	"fmt"
@@ -8,18 +8,20 @@ import (
 	"strings"
 )
 
-func setDNSServers(networkService string, servers []string) error {
+// SetDNSServers configures DNS servers for the given network service.
+func SetDNSServers(networkService string, servers []string) error {
 	args := []string{"-setdnsservers", networkService}
 	args = append(args, servers...)
 	cmd := exec.Command("networksetup", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		return fmt.Errorf("networksetup: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }
 
-func flushDNSCache() error {
+// FlushDNSCache clears the local DNS resolver cache.
+func FlushDNSCache() error {
 	cmds := [][]string{
 		{"sudo", "dscacheutil", "-flushcache"},
 		{"sudo", "killall", "-HUP", "mDNSResponder"},
@@ -30,7 +32,7 @@ func flushDNSCache() error {
 	for _, args := range cmds {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			lastErr = fmt.Errorf("%s: %s", strings.Join(args, " "), strings.TrimSpace(string(out)))
+			lastErr = fmt.Errorf("%s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 		} else {
 			return nil
 		}
@@ -38,7 +40,8 @@ func flushDNSCache() error {
 	return lastErr
 }
 
-func toggleProxy(networkService, proxyType string, enable bool) error {
+// ToggleProxy enables or disables a proxy type on the given network service.
+func ToggleProxy(networkService, proxyType string, enable bool) error {
 	flag := "off"
 	if enable {
 		flag = "on"
@@ -56,7 +59,7 @@ func toggleProxy(networkService, proxyType string, enable bool) error {
 	cmd := exec.Command("networksetup", proxyArg, networkService, flag)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		return fmt.Errorf("networksetup %s: %s: %w", proxyArg, strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

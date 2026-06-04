@@ -1,47 +1,28 @@
-package main
+// Package detect provides cross-platform network detection utilities.
+package detect
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vosskstudio/netpulse/internal/model"
 )
 
-// --- Shared types ---
-
-type traceHop struct {
-	Hop int     `json:"hop"`
-	IP  string  `json:"ip"`
-	RTT float64 `json:"rtt_ms"`
-}
-
-type wifiInfo struct {
-	SSID    string `json:"ssid"`
-	BSSID   string `json:"bssid"`
-	RSSI    int    `json:"rssi"`
-	Noise   int    `json:"noise"`
-	Channel int    `json:"channel"`
-	TxRate  int    `json:"tx_rate"`
-	PhyMode string `json:"phy_mode"`
-	Country string `json:"country_code"`
-}
-
-// --- DNS resolve (cross-platform) ---
-
-func dnsResolveSpeed(domain string) (float64, error) {
+// DNSResolveSpeed measures DNS resolution time for a domain.
+func DNSResolveSpeed(domain string) (float64, error) {
 	t0 := time.Now()
 	_, err := net.LookupHost(domain)
 	elapsed := float64(time.Since(t0).Microseconds()) / 1000.0
 	return elapsed, err
 }
 
-// --- Trace output parser (macOS format) ---
-
-func parseTraceOutput(output string, cmdErr error) ([]traceHop, error) {
-	var hops []traceHop
+// ParseTraceOutput parses macOS/Linux traceroute output into structured hops.
+func ParseTraceOutput(output string, cmdErr error) ([]model.TraceHop, error) {
+	var hops []model.TraceHop
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.HasPrefix(line, "traceroute") {
@@ -55,7 +36,7 @@ func parseTraceOutput(output string, cmdErr error) ([]traceHop, error) {
 		if err != nil {
 			continue
 		}
-		th := traceHop{Hop: hop}
+		th := model.TraceHop{Hop: hop}
 		if fields[1] == "*" {
 			th.IP = "*"
 			hops = append(hops, th)
@@ -77,9 +58,8 @@ func parseTraceOutput(output string, cmdErr error) ([]traceHop, error) {
 	return hops, nil
 }
 
-// --- Helpers ---
-
-func extractField(output, pattern string) string {
+// ExtractField returns the first regexp submatch from output.
+func ExtractField(output, pattern string) string {
 	re := regexp.MustCompile(pattern)
 	match := re.FindStringSubmatch(output)
 	if len(match) >= 2 {
@@ -88,15 +68,12 @@ func extractField(output, pattern string) string {
 	return ""
 }
 
-func extractInt(output, pattern string) (int, error) {
+// ExtractInt returns the first regexp submatch from output as an integer.
+func ExtractInt(output, pattern string) (int, error) {
 	re := regexp.MustCompile(pattern)
 	match := re.FindStringSubmatch(output)
 	if len(match) >= 2 {
 		return strconv.Atoi(strings.TrimSpace(match[1]))
 	}
 	return 0, fmt.Errorf("not found")
-}
-
-func withTimeout(d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), d)
 }

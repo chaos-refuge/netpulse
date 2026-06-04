@@ -1,6 +1,6 @@
-# Binaries
-netpulse
-netpulse-*
+# Binaries (root only)
+/netpulse
+/netpulse-*
 
 # OS
 .DS_Store
