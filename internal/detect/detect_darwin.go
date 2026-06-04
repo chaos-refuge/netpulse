@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 // QuickPing sends ICMP probes to target and returns average RTT and packet loss percentage.

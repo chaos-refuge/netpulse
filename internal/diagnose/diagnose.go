@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/detect"
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/detect"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 // collectMetrics gathers raw network metrics using the detect package.

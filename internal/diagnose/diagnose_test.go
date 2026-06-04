@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 func TestCalcScore(t *testing.T) {

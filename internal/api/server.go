@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/config"
+	"github.com/chaos-refuge/netpulse/internal/config"
 )
 
 // NewServer creates a configured HTTP server with all routes.

@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/vosskstudio/netpulse/internal/api"
-	"github.com/vosskstudio/netpulse/internal/config"
+	"github.com/chaos-refuge/netpulse/internal/api"
+	"github.com/chaos-refuge/netpulse/internal/config"
 )
 
 //go:embed frontend/css/* frontend/js/* frontend/*

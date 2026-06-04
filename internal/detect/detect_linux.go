@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 func QuickPing(target string, count int, timeout time.Duration) (avgRTT float64, lossPct float64, err error) {

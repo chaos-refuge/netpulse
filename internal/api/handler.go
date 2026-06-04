@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/detect"
-	"github.com/vosskstudio/netpulse/internal/diagnose"
-	"github.com/vosskstudio/netpulse/internal/model"
-	"github.com/vosskstudio/netpulse/internal/optimize"
+	"github.com/chaos-refuge/netpulse/internal/detect"
+	"github.com/chaos-refuge/netpulse/internal/diagnose"
+	"github.com/chaos-refuge/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/optimize"
 )
 
 var (

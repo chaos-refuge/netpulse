@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 // DNSResolveSpeed measures DNS resolution time for a domain.

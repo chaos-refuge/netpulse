@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vosskstudio/netpulse/internal/model"
+	"github.com/chaos-refuge/netpulse/internal/model"
 )
 
 func writeJSON(w http.ResponseWriter, data interface{}, err error, elapsed time.Duration) {
